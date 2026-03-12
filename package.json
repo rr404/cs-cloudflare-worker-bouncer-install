@@ -1,0 +1,46 @@
+{
+	"name": "cs-cloudflare-worker-bouncer-install",
+	"description": "A Cloudflare Worker that serves as a bouncer installer for the CS platform.",
+	"cloudflare": {
+		"label": "CS Cloudflare Worker Bouncer Installer",
+		"products": [
+			"Workers"
+		],
+		"categories": [
+			"starter"
+		],
+		"docs_url": "https://github.com/crowdsecurity/cs-cloudflare-worker-bouncer-install/blob/main/README.md",
+		"publish": true
+	},
+	"dependencies": {
+		"cloudflare": "^5.2.0",
+		"hono": "4.11.1",
+		"isbot": "5.1.32",
+		"react": "19.2.1",
+		"react-dom": "19.2.1",
+		"react-router": "7.9.6"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "1.15.3",
+		"@react-router/dev": "7.9.6",
+		"@tailwindcss/vite": "4.1.17",
+		"@types/node": "^24.10.1",
+		"@types/react": "19.2.7",
+		"@types/react-dom": "19.2.3",
+		"tailwindcss": "4.1.17",
+		"typescript": "5.9.3",
+		"vite": "^6.0.0",
+		"vite-tsconfig-paths": "5.1.4",
+		"wrangler": "^4.67.0"
+	},
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "react-router build",
+		"cf-typegen": "wrangler types",
+		"deploy": "npm run build && wrangler deploy",
+		"dev": "react-router dev",
+		"preview": "npm run build && vite preview",
+		"typecheck": "npm run cf-typegen && react-router typegen && tsc -b"
+	}
+}
