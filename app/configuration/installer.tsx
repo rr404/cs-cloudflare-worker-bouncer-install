@@ -565,7 +565,7 @@ function ConfirmDialog({ modal, onConfirm, onCancel }: {
 }
 
 function ZonesSection({
-  zones, loading, workersInstalled, token, csUrl, csKey, onRefresh,
+  zones, loading, workersInstalled, token, csUrl, csKey, onRefresh, onWorkersChange,
 }: {
   zones: ZoneStatus[];
   loading: boolean;
@@ -574,6 +574,7 @@ function ZonesSection({
   csUrl: string;
   csKey: string;
   onRefresh: () => void;
+  onWorkersChange: (installed: boolean) => void;
 }) {
   const [filter, setFilter]     = useState<"all" | "protected" | "unprotected">("all");
   const [search, setSearch]     = useState("");
@@ -615,8 +616,19 @@ function ZonesSection({
     setProgress([]);
     setBusyZones(new Set(targets.map((z) => z.zoneId)));
     try {
-      for (const z of targets) {
-        await runWs({ op: "bind_zone", token, zone: zoneToMsg(z) }, addProgress);
+      if (!workersInstalled) {
+        // Workers not yet installed — full install using the first zone's accountId
+        const accountId = targets[0].accountId;
+        await runWs({
+          op: "install_workers", token, accountId,
+          zones: targets.map(zoneToMsg),
+          crowdsecApiUrl: csUrl, crowdsecApiKey: csKey,
+        }, addProgress);
+        onWorkersChange(true);
+      } else {
+        for (const z of targets) {
+          await runWs({ op: "bind_zone", token, zone: zoneToMsg(z) }, addProgress);
+        }
       }
       setSelected(new Set());
       onRefresh();
@@ -657,6 +669,7 @@ function ZonesSection({
       for (const [accountId, azones] of byAccount) {
         await runWs({ op: "uninstall_all", token, accountId, zones: azones.map(zoneToMsg) }, addProgress);
       }
+      onWorkersChange(false);
       onRefresh();
     } catch (err: unknown) {
       addProgress(err instanceof Error ? err.message : "Failed", "error");
@@ -981,6 +994,7 @@ export function InstallerPage() {
             workersInstalled={workersInstalled}
             token={token} csUrl={csUrl} csKey={csKey}
             onRefresh={refreshZones}
+            onWorkersChange={setWorkersInstalled}
           />
         </div>
 

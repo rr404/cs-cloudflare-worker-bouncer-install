@@ -45,13 +45,13 @@ async function installWorkers(
 	apiToken: string,
 	progress: Progress,
 ): Promise<void> {
-	progress("Removing existing infrastructure", "info");
+	progress("Cleaning existing infrastructure", "info");
 	await deleteTurnstileWidgets(client, accountId);
 	await deleteWorkerRoutes(client, zones, RESOURCE_NAMES.MAIN_WORKER);
 	await deleteWorkerScripts(client, accountId, [RESOURCE_NAMES.MAIN_WORKER, RESOURCE_NAMES.SYNC_WORKER]);
 	await findAndDeleteKVNamespace(client, accountId);
 	await findAndDeleteD1Database(client, accountId);
-	progress("Existing infrastructure removed", "success");
+	progress("Existing infrastructure cleaned", "success");
 
 	progress("Creating KV namespace", "info");
 	const kvNamespaceId = await createKVNamespace(client, accountId);
