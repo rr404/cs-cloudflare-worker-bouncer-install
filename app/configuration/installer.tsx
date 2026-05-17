@@ -193,16 +193,18 @@ function CfTokenSection({
 // ─── Section 2 — CrowdSec Endpoint ───────────────────────────────────────────
 
 function CrowdSecSection({
-  enabled, url, setUrl, apiKey, setApiKey,
+  enabled, url, setUrl, apiKey, setApiKey, installedUrl,
 }: {
   enabled: boolean;
   url: string;
   setUrl: (v: string) => void;
   apiKey: string;
   setApiKey: (v: string) => void;
+  installedUrl: string | null | "loading";
 }) {
   const [open, setOpen]       = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   // Auto-open when it becomes enabled for the first time
   const didAutoOpen = useRef(false);
@@ -211,7 +213,16 @@ function CrowdSecSection({
     Promise.resolve().then(() => setOpen(true));
   }
 
+  // When a real URL first arrives, pre-fill the url field and leave edit mode
+  const prevInstalledUrl = useRef<string | null>(null);
+  if (typeof installedUrl === "string" && installedUrl !== "loading" && installedUrl !== prevInstalledUrl.current) {
+    prevInstalledUrl.current = installedUrl;
+    Promise.resolve().then(() => { setUrl(installedUrl); setEditing(false); });
+  }
+
   const hostLabel = (() => { try { return new URL(url).host; } catch { return null; } })();
+  const isLoading    = installedUrl === "loading";
+  const showInstalled = typeof installedUrl === "string" && installedUrl !== "loading" && !editing;
 
   return (
     <div style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -224,42 +235,101 @@ function CrowdSecSection({
 
       <div style={{
         overflow: "hidden",
-        maxHeight: open ? "300px" : "0px",
+        maxHeight: open ? "400px" : "0px",
         transition: open ? "max-height 0.3s ease" : "max-height 0.2s ease",
       }}>
         <div style={{ padding: "2px 18px 16px" }}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>Endpoint URL</label>
-            <input
-              value={url}
-              onChange={(e) => setUrl((e.target as HTMLInputElement).value)}
-              placeholder="https://your-lapi.example.com"
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>API Key</label>
-            <div style={{ position: "relative" }}>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey((e.target as HTMLInputElement).value)}
-                type={showKey ? "text" : "password"}
-                placeholder="cs_live_••••••••"
-                style={{ ...inputStyle, fontFamily: "'JetBrains Mono',monospace", paddingRight: 52 }}
-              />
+
+          {isLoading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", color: T.textMute, fontSize: 11 }}>
+              <Spinner size={10} color={T.orange} />
+              Checking endpoint configuration…
+            </div>
+          ) : showInstalled ? (
+            /* ── Installed view ── */
+            <div style={{
+              padding: "10px 12px", borderRadius: 5,
+              border: `1px solid ${T.greenBd}`, background: T.greenBg,
+              display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12,
+            }}>
+              <div>
+                <div style={{ fontSize: 11, color: T.green, fontWeight: 700, marginBottom: 3 }}>
+                  {installedUrl}
+                </div>
+                <div style={{ fontSize: 10.5, color: T.textMute }}>
+                  Current endpoint used for protection
+                </div>
+              </div>
               <button
-                onClick={() => setShowKey((v) => !v)}
+                onClick={() => setEditing(true)}
                 style={{
-                  position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-                  background: "none", border: "none", color: T.textFaint,
-                  cursor: "pointer", fontSize: 9, letterSpacing: "0.06em",
-                  fontFamily: "inherit", fontWeight: 700, padding: 0,
+                  flexShrink: 0, padding: "4px 11px", borderRadius: 4,
+                  border: `1px solid ${T.border}`, background: T.surface,
+                  color: T.textMid, fontSize: 10.5, fontWeight: 700,
+                  cursor: "pointer", fontFamily: "inherit",
                 }}
               >
-                {showKey ? "HIDE" : "SHOW"}
+                Edit
               </button>
             </div>
-          </div>
+          ) : (
+            /* ── Edit form ── */
+            <>
+              {editing && (
+                <div style={{ marginBottom: 10, fontSize: 11, color: T.textMute }}>
+                  Editing will update the endpoint info on next zone install (for all zones).
+                </div>
+              )}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>Endpoint URL</label>
+                <input
+                  value={url}
+                  onChange={(e) => setUrl((e.target as HTMLInputElement).value)}
+                  placeholder="https://your-lapi.example.com"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>API Key</label>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={apiKey}
+                      onChange={(e) => setApiKey((e.target as HTMLInputElement).value)}
+                      type={showKey ? "text" : "password"}
+                      placeholder="cs_live_••••••••"
+                      style={{ ...inputStyle, fontFamily: "'JetBrains Mono',monospace", paddingRight: 52 }}
+                    />
+                    <button
+                      onClick={() => setShowKey((v) => !v)}
+                      style={{
+                        position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                        background: "none", border: "none", color: T.textFaint,
+                        cursor: "pointer", fontSize: 9, letterSpacing: "0.06em",
+                        fontFamily: "inherit", fontWeight: 700, padding: 0,
+                      }}
+                    >
+                      {showKey ? "HIDE" : "SHOW"}
+                    </button>
+                  </div>
+                </div>
+                {editing && installedUrl && (
+                  <button
+                    onClick={() => setEditing(false)}
+                    style={{
+                      alignSelf: "flex-end", padding: "8px 12px", borderRadius: 5,
+                      border: `1px solid ${T.border}`, background: "transparent",
+                      color: T.textMute, fontSize: 11, fontWeight: 600,
+                      cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
         </div>
       </div>
     </div>
@@ -454,29 +524,38 @@ export function InstallerPage() {
   const [csUrl, setCsUrl]                     = useState("");
   const [csKey, setCsKey]                     = useState("");
   const [workersInstalled, setWorkersInstalled] = useState<boolean | null>(null);
+  const [installedLapiUrl, setInstalledLapiUrl] = useState<string | null | "loading">(null);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tokenValid = tokenState === "valid";
 
   async function verifyToken(val: string) {
-    if (!val.trim()) { setTokenState("idle"); setWorkersInstalled(null); return; }
+    if (!val.trim()) { setTokenState("idle"); setWorkersInstalled(null); setInstalledLapiUrl(null); return; }
     setTokenState("checking");
     try {
       const res  = await fetch("/verify-token", { headers: { Authorization: `Bearer ${val.trim()}` } });
       const data = await res.json() as { valid?: boolean };
       if (data.valid) {
         setTokenState("valid");
-        // Fetch worker list in the background — don't block token validation feedback
+        setInstalledLapiUrl("loading");
         fetch("/workers", { headers: { Authorization: `Bearer ${val.trim()}` } })
           .then((r) => r.json() as Promise<{ workers?: string[] }>)
           .then((d) => {
             const w = d.workers ?? [];
-            setWorkersInstalled(
+            const installed =
               w.includes("crowdsec-cloudflare-worker-bouncer") &&
-              w.includes("crowdsec-decisions-sync-worker"),
-            );
+              w.includes("crowdsec-decisions-sync-worker");
+            setWorkersInstalled(installed);
+            if (installed) {
+              fetch("/worker-settings", { headers: { Authorization: `Bearer ${val.trim()}` } })
+                .then((r) => r.json() as Promise<{ lapiUrl?: string | null }>)
+                .then((s) => setInstalledLapiUrl(s.lapiUrl ?? null))
+                .catch(() => setInstalledLapiUrl(null));
+            } else {
+              setInstalledLapiUrl(null);
+            }
           })
-          .catch(() => setWorkersInstalled(false));
+          .catch(() => { setWorkersInstalled(false); setInstalledLapiUrl(null); });
       } else {
         setTokenState("error");
         setWorkersInstalled(null);
@@ -557,6 +636,7 @@ export function InstallerPage() {
             enabled={tokenValid}
             url={csUrl} setUrl={setCsUrl}
             apiKey={csKey} setApiKey={setCsKey}
+            installedUrl={installedLapiUrl}
           />
           <ZonesSection workersInstalled={workersInstalled} />
         </div>

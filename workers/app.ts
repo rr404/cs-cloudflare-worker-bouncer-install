@@ -47,6 +47,30 @@ app.get("/workers", async (c) => {
 	}
 });
 
+/** Read LAPI_URL from the sync worker's bindings (if deployed) */
+app.get("/worker-settings", async (c) => {
+	const token = extractToken(c.req.header("Authorization"));
+	if (!token) return c.json({ error: "Missing API Token" }, 401);
+
+	try {
+		const client = createCloudflareClient(token);
+		for await (const account of client.accounts.list()) {
+			try {
+				const settings = await client.workers.scripts.scriptAndVersionSettings.get(
+					"crowdsec-decisions-sync-worker",
+					{ account_id: account.id },
+				);
+				const bindings = (settings.bindings ?? []) as Array<{ type: string; name: string; text?: string }>;
+				const lapiUrl = bindings.find((b) => b.type === "plain_text" && b.name === "LAPI_URL")?.text ?? null;
+				if (lapiUrl) return c.json({ lapiUrl });
+			} catch { /* worker not deployed on this account */ }
+		}
+		return c.json({ lapiUrl: null });
+	} catch (err: unknown) {
+		return c.json({ error: extractErrorMessage(err) }, 400);
+	}
+});
+
 app.get("*", (c) => {
 	const requestHandler = createRequestHandler(
 		() => import("virtual:react-router/server-build"),
