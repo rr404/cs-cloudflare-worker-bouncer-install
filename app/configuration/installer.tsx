@@ -583,7 +583,17 @@ function ZonesSection({
   const [globalBusy, setGlobalBusy] = useState(false);
   const [modal, setModal]       = useState<ConfirmModal | null>(null);
   const [progress, setProgress] = useState<ProgressMsg[]>([]);
+  const [csError, setCsError]   = useState(false);
   const progressId = useRef(0);
+
+  function requestBind(targets: ZoneStatus[]) {
+    if (!workersInstalled && (!csUrl.trim() || !csKey.trim())) {
+      setCsError(true);
+      return;
+    }
+    setCsError(false);
+    setModal({ op: "bind", zones: targets });
+  }
 
   const boundCount  = zones.filter((z) => z.bound).length;
   const filtered    = zones
@@ -731,6 +741,23 @@ function ZonesSection({
             </div>
           )}
 
+          {/* CrowdSec endpoint required error */}
+          {csError && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+              padding: "7px 10px", borderRadius: 5,
+              background: T.redBg, border: `1px solid ${T.redBd}`,
+              fontSize: 11, color: T.red, fontWeight: 600,
+            }}>
+              <span style={{ flexShrink: 0 }}>✗</span>
+              <span style={{ flex: 1 }}>CrowdSec endpoint URL and API key are required before the first install.</span>
+              <button onClick={() => setCsError(false)} style={{
+                background: "none", border: "none", color: T.red, cursor: "pointer",
+                fontSize: 13, padding: 0, lineHeight: 1, flexShrink: 0,
+              }}>✕</button>
+            </div>
+          )}
+
           {loading || globalBusy ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: T.textMute, fontSize: 11 }}>
               <Spinner size={10} color={T.orange} />
@@ -782,7 +809,7 @@ function ZonesSection({
                 }}>
                   <span style={{ fontSize: 11, color: T.text, fontWeight: 600, flex: 1 }}>{selected.size} selected</span>
                   {selUnbound.length > 0 && (
-                    <button onClick={() => setModal({ op: "bind", zones: selUnbound })} style={{
+                    <button onClick={() => requestBind(selUnbound)} style={{
                       padding: "4px 10px", borderRadius: 4, border: `1px solid ${T.orange}`,
                       background: T.orange, color: "#fff", fontSize: 10.5, fontWeight: 700,
                       cursor: "pointer", fontFamily: "inherit",
@@ -826,7 +853,7 @@ function ZonesSection({
                         selected={selected.has(zone.zoneId)}
                         busy={busyZones.has(zone.zoneId)}
                         onToggle={() => toggleZone(zone.zoneId)}
-                        onInstall={() => setModal({ op: "bind", zones: [zone] })}
+                        onInstall={() => requestBind([zone])}
                         onRemove={() => setModal({ op: "unbind", zones: [zone] })}
                       />
                     ))
