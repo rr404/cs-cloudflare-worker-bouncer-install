@@ -227,7 +227,7 @@ function CrowdSecSection({
   return (
     <div style={{ borderBottom: `1px solid ${T.border}` }}>
       <SectionHeader
-        step={2} title="CrowdSec Endpoint"
+        step={2} title="CrowdSec Integration Endpoint"
         subtitle={!open && hostLabel ? hostLabel : undefined}
         open={open} enabled={enabled}
         onToggle={() => setOpen((o) => !o)}
@@ -277,7 +277,7 @@ function CrowdSecSection({
             <>
               {editing && (
                 <div style={{ marginBottom: 10, fontSize: 11, color: T.textMute }}>
-                  Editing will update the endpoint info on next zone install (for all zones).
+                  ⚠️ Editing will update the endpoint info on next zone install (for all zones).
                 </div>
               )}
               <div style={{ marginBottom: 12 }}>
@@ -630,7 +630,7 @@ export function InstallerPage() {
         }}>
           <CfTokenSection
             token={token} tokenState={tokenState}
-            onChange={handleChange} onBlur={() => verifyToken(token)}
+            onChange={handleChange} onBlur={() => { if (tokenState !== "valid") verifyToken(token); }}
           />
           <CrowdSecSection
             enabled={tokenValid}
