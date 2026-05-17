@@ -368,7 +368,7 @@ function ZonesSection() {
 
 // ─── Page root ────────────────────────────────────────────────────────────────
 
-export function ConfigurationPage() {
+export function InstallerPage() {
   const [token, setToken]           = useState("");
   const [tokenState, setTokenState] = useState<TokenState>("idle");
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
