@@ -362,13 +362,48 @@ function CrowdSecSection({
 
 // ─── Section 3 — Zone Protection ─────────────────────────────────────────────
 
-function ZoneRow({ zone }: { zone: ZoneStatus }) {
+type ProgressMsg = { id: number; step: string; status: "info" | "success" | "error" };
+type ConfirmModal = { op: "bind" | "unbind" | "uninstall_all"; zones: ZoneStatus[] };
+
+function getWsUrl() {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws`;
+}
+
+function runWs(
+  msg: object,
+  onProgress: (step: string, status: "info" | "success" | "error") => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(getWsUrl());
+    let done = false;
+    ws.onopen  = () => ws.send(JSON.stringify(msg));
+    ws.onmessage = (e: MessageEvent<string>) => {
+      const d = JSON.parse(e.data) as { type: string; step?: string; status?: "info" | "success" | "error"; success?: boolean; error?: string };
+      if (d.type === "progress" && d.step && d.status) onProgress(d.step, d.status);
+      if (d.type === "done") { done = true; ws.close(); d.success ? resolve() : reject(new Error(d.error ?? "Failed")); }
+    };
+    ws.onerror  = () => { if (!done) reject(new Error("WebSocket error")); };
+    ws.onclose  = () => { if (!done) reject(new Error("Connection closed")); };
+  });
+}
+
+function ZoneRow({ zone, selected, busy, onToggle, onInstall, onRemove }: {
+  zone: ZoneStatus;
+  selected: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
   return (
     <div style={{
-      background: T.surface, border: `1px solid ${T.border}`,
+      background: selected ? T.orangeBg : T.surface,
+      border: `1px solid ${selected ? T.orangeBd : T.border}`,
       borderRadius: 5, padding: "8px 12px",
       display: "flex", alignItems: "center", gap: 10,
       position: "relative", overflow: "hidden",
+      opacity: busy ? 0.55 : 1, transition: "all 0.12s",
     }}>
       {zone.bound && (
         <div style={{
@@ -377,19 +412,21 @@ function ZoneRow({ zone }: { zone: ZoneStatus }) {
         }} />
       )}
 
-      {/* Checkbox placeholder */}
-      <div style={{
-        width: 13, height: 13, borderRadius: 2, flexShrink: 0,
-        border: `1px solid ${T.borderHi}`, background: T.surface,
-      }} />
+      {/* Checkbox */}
+      <div onClick={onToggle} style={{
+        width: 13, height: 13, borderRadius: 2, flexShrink: 0, cursor: "pointer",
+        border: `1px solid ${selected ? T.orange : T.borderHi}`,
+        background: selected ? T.orange : T.surface,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "all 0.12s",
+      }}>
+        {selected && <span style={{ color: "#fff", fontSize: 8, fontWeight: 900 }}>✓</span>}
+      </div>
 
-      {/* Domain + status badge */}
+      {/* Domain + badges */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-          <span style={{
-            fontSize: 12, fontWeight: 700, color: T.text,
-            fontFamily: "'JetBrains Mono',monospace",
-          }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: T.text, fontFamily: "'JetBrains Mono',monospace" }}>
             {zone.domain}
           </span>
           <span style={{
@@ -400,10 +437,7 @@ function ZoneRow({ zone }: { zone: ZoneStatus }) {
             color: zone.bound ? T.green : T.textMute,
             display: "inline-flex", alignItems: "center", gap: 3,
           }}>
-            <span style={{
-              width: 4, height: 4, borderRadius: "50%",
-              background: zone.bound ? T.green : T.textFaint,
-            }} />
+            <span style={{ width: 4, height: 4, borderRadius: "50%", background: zone.bound ? T.green : T.textFaint }} />
             {zone.bound ? "PROTECTED" : "UNPROTECTED"}
           </span>
           <span style={{
@@ -419,131 +453,385 @@ function ZoneRow({ zone }: { zone: ZoneStatus }) {
         </div>
       </div>
 
-      {/* Action button placeholder */}
+      {/* Action */}
       <div style={{ flexShrink: 0 }}>
-        <button style={{
-          padding: "3px 11px", borderRadius: 4,
-          border: `1px solid ${T.borderHi}`,
-          background: T.surface, color: T.textMid,
-          fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+        {busy
+          ? <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: T.textMute }}><Spinner size={9} />…</span>
+          : zone.bound
+            ? <button onClick={onRemove} style={{
+                padding: "3px 11px", borderRadius: 4,
+                border: `1px solid ${T.borderHi}`, background: T.surface,
+                color: T.textMid, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              }}>Remove</button>
+            : <button onClick={onInstall} style={{
+                padding: "3px 11px", borderRadius: 4,
+                border: `1px solid ${T.orangeBd}`, background: T.orangeBg,
+                color: T.orangeDk, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              }}>Install</button>
+        }
+      </div>
+    </div>
+  );
+}
+
+function ProgressLog({ messages }: { messages: ProgressMsg[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  messages.length && endRef.current?.scrollIntoView({ behavior: "smooth" });
+  return (
+    <div style={{
+      borderRadius: 5, border: `1px solid ${T.border}`, background: T.panel,
+      padding: "8px 12px", marginTop: 10, maxHeight: 160, overflowY: "auto",
+      fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5,
+    }}>
+      {messages.map((m) => (
+        <div key={m.id} style={{
+          display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 2,
+          color: m.status === "success" ? T.green : m.status === "error" ? T.red : T.textMute,
         }}>
-          {zone.bound ? "Remove" : "Install"}
-        </button>
+          <span style={{ flexShrink: 0 }}>{m.status === "success" ? "✓" : m.status === "error" ? "✗" : "›"}</span>
+          <span>{m.step}</span>
+        </div>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function ConfirmDialog({ modal, onConfirm, onCancel }: {
+  modal: ConfirmModal;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const isDestructive = modal.op !== "bind";
+  const title =
+    modal.op === "bind"          ? `Enable protection on ${modal.zones.length} zone${modal.zones.length !== 1 ? "s" : ""}` :
+    modal.op === "unbind"        ? `Remove protection from ${modal.zones.length} zone${modal.zones.length !== 1 ? "s" : ""}` :
+    "Uninstall all CrowdSec infrastructure";
+  const note =
+    modal.op === "bind"          ? "Zone will be protected by CrowdSec's workers." :
+    modal.op === "unbind"        ? "Zone won't be protected by CrowdSec. Workers, KV and D1 are kept." :
+    "Full removal of CrowdSec Protection: Removes both workers, KV and D1. All zones lose CrowdSec protection.";
+  const action = modal.op === "bind" ? "Enable" : modal.op === "unbind" ? "Remove" : "Uninstall everything";
+  const color  = isDestructive ? T.red : T.orange;
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(20,24,32,0.45)",
+      zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 24, backdropFilter: "blur(2px)",
+    }}>
+      <div style={{
+        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+        padding: 22, width: "100%", maxWidth: 420,
+        boxShadow: "0 18px 50px rgba(20,24,32,0.18)",
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>{title}</div>
+        {modal.op !== "uninstall_all" && modal.zones.length > 0 && (
+          <div style={{
+            background: T.panel, borderRadius: 5, border: `1px solid ${T.border}`,
+            marginBottom: 12, maxHeight: 130, overflowY: "auto",
+          }}>
+            {modal.zones.map((z, i) => (
+              <div key={z.zoneId} style={{
+                padding: "5px 11px", fontSize: 12,
+                fontFamily: "'JetBrains Mono',monospace", color: T.text,
+                borderBottom: i < modal.zones.length - 1 ? `1px solid ${T.border}` : "none",
+              }}>{z.domain}</div>
+            ))}
+          </div>
+        )}
+        <div style={{
+          padding: "9px 12px", borderRadius: 5, marginBottom: 16,
+          background: isDestructive ? T.redBg : T.orangeBg,
+          border: `1px solid ${isDestructive ? T.redBd : T.orangeBd}`,
+          fontSize: 11.5, color: T.textMid, lineHeight: 1.55,
+        }}>{note}</div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onCancel} style={{
+            padding: "7px 14px", borderRadius: 5, border: `1px solid ${T.border}`,
+            background: "transparent", color: T.textMid,
+            fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+          }}>Cancel</button>
+          <button onClick={onConfirm} style={{
+            padding: "7px 16px", borderRadius: 5, border: "none",
+            background: color, color: "#fff",
+            fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>{action}</button>
+        </div>
       </div>
     </div>
   );
 }
 
 function ZonesSection({
-  zones, loading, workersInstalled,
+  zones, loading, workersInstalled, token, csUrl, csKey, onRefresh,
 }: {
   zones: ZoneStatus[];
   loading: boolean;
   workersInstalled: boolean | null;
+  token: string;
+  csUrl: string;
+  csKey: string;
+  onRefresh: () => void;
 }) {
-  const [filter, setFilter] = useState<"all" | "protected" | "unprotected">("all");
-  const [search, setSearch] = useState("");
+  const [filter, setFilter]     = useState<"all" | "protected" | "unprotected">("all");
+  const [search, setSearch]     = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busyZones, setBusyZones] = useState<Set<string>>(new Set());
+  const [globalBusy, setGlobalBusy] = useState(false);
+  const [modal, setModal]       = useState<ConfirmModal | null>(null);
+  const [progress, setProgress] = useState<ProgressMsg[]>([]);
+  const progressId = useRef(0);
 
-  const allZones = zones;
-  const boundCount = allZones.filter((z) => z.bound).length;
-  const filtered = allZones
+  const boundCount  = zones.filter((z) => z.bound).length;
+  const filtered    = zones
     .filter((z) => {
       const matchFilter = filter === "all" || (filter === "protected" ? z.bound : !z.bound);
       return matchFilter && (search === "" || z.domain.toLowerCase().includes(search.toLowerCase()));
     })
     .sort((a, b) => a.domain.localeCompare(b.domain));
 
+  const selList = zones.filter((z) => selected.has(z.zoneId));
+  const selUnbound = selList.filter((z) => !z.bound);
+  const selBound   = selList.filter((z) => z.bound);
+  const allFilteredSelected = filtered.length > 0 && filtered.every((z) => selected.has(z.zoneId));
+
+  function addProgress(step: string, status: "info" | "success" | "error") {
+    setProgress((prev) => [...prev, { id: progressId.current++, step, status }]);
+  }
+
+  function zoneToMsg(z: ZoneStatus) {
+    return {
+      zoneId: z.zoneId, domain: z.domain,
+      accountId: z.accountId, accountName: z.accountName,
+      actions: z.actions, defaultAction: z.defaultAction,
+      routesToProtect: z.routesToProtect,
+    };
+  }
+
+  async function execBind(targets: ZoneStatus[]) {
+    setModal(null);
+    setProgress([]);
+    setBusyZones(new Set(targets.map((z) => z.zoneId)));
+    try {
+      for (const z of targets) {
+        await runWs({ op: "bind_zone", token, zone: zoneToMsg(z) }, addProgress);
+      }
+      setSelected(new Set());
+      onRefresh();
+    } catch (err: unknown) {
+      addProgress(err instanceof Error ? err.message : "Failed", "error");
+    } finally {
+      setBusyZones(new Set());
+    }
+  }
+
+  async function execUnbind(targets: ZoneStatus[]) {
+    setModal(null);
+    setProgress([]);
+    setBusyZones(new Set(targets.map((z) => z.zoneId)));
+    try {
+      for (const z of targets) {
+        await runWs({ op: "unbind_zone", token, zone: zoneToMsg(z) }, addProgress);
+      }
+      setSelected(new Set());
+      onRefresh();
+    } catch (err: unknown) {
+      addProgress(err instanceof Error ? err.message : "Failed", "error");
+    } finally {
+      setBusyZones(new Set());
+    }
+  }
+
+  async function execUninstallAll() {
+    setModal(null);
+    setProgress([]);
+    setGlobalBusy(true);
+    // Group by account
+    const byAccount = new Map<string, ZoneStatus[]>();
+    for (const z of zones) {
+      (byAccount.get(z.accountId) ?? (byAccount.set(z.accountId, []), byAccount.get(z.accountId)!)).push(z);
+    }
+    try {
+      for (const [accountId, azones] of byAccount) {
+        await runWs({ op: "uninstall_all", token, accountId, zones: azones.map(zoneToMsg) }, addProgress);
+      }
+      onRefresh();
+    } catch (err: unknown) {
+      addProgress(err instanceof Error ? err.message : "Failed", "error");
+    } finally {
+      setGlobalBusy(false);
+    }
+  }
+
+  function handleConfirm() {
+    if (!modal) return;
+    if (modal.op === "bind")         execBind(modal.zones);
+    if (modal.op === "unbind")       execUnbind(modal.zones);
+    if (modal.op === "uninstall_all") execUninstallAll();
+  }
+
+  function toggleZone(id: string) {
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAll() {
+    const ids = filtered.map((z) => z.zoneId);
+    const allSel = ids.every((id) => selected.has(id));
+    setSelected((s) => { const n = new Set(s); allSel ? ids.forEach((id) => n.delete(id)) : ids.forEach((id) => n.add(id)); return n; });
+  }
+
+  const busy = globalBusy || busyZones.size > 0;
+
   return (
-    <div style={{ borderBottom: `1px solid ${T.border}` }}>
-      <SectionHeader step={3} title="Zone Protection" open={zones.length > 0 || loading} enabled={false} />
+    <>
+      <div style={{ borderBottom: `1px solid ${T.border}` }}>
+        <SectionHeader step={3} title="Zone Protection" open={zones.length > 0 || loading} enabled={false} />
 
-      <div style={{ padding: "2px 18px 16px" }}>
-        {/* Workers status line */}
-        {workersInstalled !== null && (
-          <div style={{
-            marginBottom: 10, fontSize: 11, display: "flex", alignItems: "center", gap: 5,
-            color: workersInstalled ? T.green : T.textMute,
-          }}>
-            <span>{workersInstalled ? "✓" : "·"}</span>
-            <span>
-              {workersInstalled
-                ? "CrowdSec remediation workers installed"
-                : "CrowdSec remediation workers will be installed along zone binding"}
-            </span>
-          </div>
-        )}
-
-        {loading ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: T.textMute, fontSize: 11 }}>
-            <Spinner size={10} color={T.orange} />
-            Loading zones…
-          </div>
-        ) : (
-          <>
-            {/* Toolbar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: 3 }}>
-                {([["all", "All", allZones.length], ["protected", "Protected", boundCount], ["unprotected", "Unprotected", allZones.length - boundCount]] as const).map(([key, label, count]) => (
-                  <button key={key} onClick={() => setFilter(key)} style={{
-                    padding: "4px 10px", borderRadius: 4,
-                    border: `1px solid ${filter === key ? T.orangeBd : T.border}`,
-                    background: filter === key ? T.orangeBg : T.surface,
-                    color: filter === key ? T.orangeDk : T.textMid,
-                    fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                    display: "flex", alignItems: "center", gap: 4,
-                  }}>
-                    {label}
-                    <span style={{
-                      fontSize: 9.5, padding: "0 4px", borderRadius: 2,
-                      background: filter === key ? "rgba(246,130,31,0.16)" : T.panelAlt,
-                      color: filter === key ? T.orangeDk : T.textMute, fontWeight: 700,
-                    }}>{count}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ position: "relative", flex: 1, minWidth: 160, maxWidth: 240 }}>
-                <span style={{
-                  position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)",
-                  color: T.textFaint, fontSize: 11,
-                }}>⌕</span>
-                <input
-                  value={search}
-                  onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
-                  placeholder="Filter by domain…"
-                  style={{
-                    width: "100%", padding: "5px 10px 5px 22px", borderRadius: 4,
-                    border: `1px solid ${T.border}`, background: T.surface, color: T.text,
-                    fontSize: 10.5, outline: "none", fontFamily: "'JetBrains Mono',monospace",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Count row */}
+        <div style={{ padding: "2px 18px 16px" }}>
+          {/* Workers status line */}
+          {workersInstalled !== null && (
             <div style={{
-              display: "flex", justifyContent: "flex-end",
-              marginBottom: 6,
+              marginBottom: 10, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
             }}>
-              <span style={{ fontSize: 10, color: T.textFaint }}>
-                {filtered.length} zone{filtered.length !== 1 ? "s" : ""}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, color: workersInstalled ? T.green : T.textMute }}>
+                <span>{workersInstalled ? "✓" : "·"}</span>
+                <span>{workersInstalled
+                  ? "CrowdSec remediation workers installed"
+                  : "CrowdSec remediation workers will be installed along zone binding"}
+                </span>
+              </div>
+              {workersInstalled && (
+                <button
+                  onClick={() => setModal({ op: "uninstall_all", zones })}
+                  disabled={busy}
+                  style={{
+                    flexShrink: 0, padding: "3px 10px", borderRadius: 4,
+                    border: `1px solid ${T.border}`, background: "transparent",
+                    color: T.textMute, fontSize: 10, fontWeight: 700,
+                    cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit",
+                  }}
+                  onMouseEnter={(e) => { const b = e.currentTarget; b.style.color = T.red; b.style.borderColor = T.redBd; b.style.background = T.redBg; }}
+                  onMouseLeave={(e) => { const b = e.currentTarget; b.style.color = T.textMute; b.style.borderColor = T.border; b.style.background = "transparent"; }}
+                >Uninstall all</button>
+              )}
             </div>
+          )}
 
-            {/* Zone list */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {filtered.length > 0
-                ? filtered.map((zone) => <ZoneRow key={zone.zoneId} zone={zone} />)
-                : <div style={{ textAlign: "center", padding: "20px 0", fontSize: 11, color: T.textFaint }}>
-                    {allZones.length === 0 ? "No zones found for this token." : "No zones match."}
-                  </div>
-              }
+          {loading || globalBusy ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: T.textMute, fontSize: 11 }}>
+              <Spinner size={10} color={T.orange} />
+              {globalBusy ? "Running…" : "Loading zones…"}
             </div>
-          </>
-        )}
+          ) : (
+            <>
+              {/* Toolbar */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 3 }}>
+                  {([["all", "All", zones.length], ["protected", "Protected", boundCount], ["unprotected", "Unprotected", zones.length - boundCount]] as const).map(([key, label, count]) => (
+                    <button key={key} onClick={() => setFilter(key)} style={{
+                      padding: "4px 10px", borderRadius: 4,
+                      border: `1px solid ${filter === key ? T.orangeBd : T.border}`,
+                      background: filter === key ? T.orangeBg : T.surface,
+                      color: filter === key ? T.orangeDk : T.textMid,
+                      fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                      display: "flex", alignItems: "center", gap: 4,
+                    }}>
+                      {label}
+                      <span style={{
+                        fontSize: 9.5, padding: "0 4px", borderRadius: 2,
+                        background: filter === key ? "rgba(246,130,31,0.16)" : T.panelAlt,
+                        color: filter === key ? T.orangeDk : T.textMute, fontWeight: 700,
+                      }}>{count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div style={{ position: "relative", flex: 1, minWidth: 160, maxWidth: 240 }}>
+                  <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: T.textFaint, fontSize: 11 }}>⌕</span>
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+                    placeholder="Filter by domain…"
+                    style={{
+                      width: "100%", padding: "5px 10px 5px 22px", borderRadius: 4,
+                      border: `1px solid ${T.border}`, background: T.surface, color: T.text,
+                      fontSize: 10.5, outline: "none", fontFamily: "'JetBrains Mono',monospace", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Batch action bar */}
+              {selected.size > 0 && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
+                  borderRadius: 5, background: T.orangeBg, border: `1px solid ${T.orangeBd}`, marginBottom: 8,
+                }}>
+                  <span style={{ fontSize: 11, color: T.text, fontWeight: 600, flex: 1 }}>{selected.size} selected</span>
+                  {selUnbound.length > 0 && (
+                    <button onClick={() => setModal({ op: "bind", zones: selUnbound })} style={{
+                      padding: "4px 10px", borderRadius: 4, border: `1px solid ${T.orange}`,
+                      background: T.orange, color: "#fff", fontSize: 10.5, fontWeight: 700,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}>Install {selUnbound.length}</button>
+                  )}
+                  {selBound.length > 0 && (
+                    <button onClick={() => setModal({ op: "unbind", zones: selBound })} style={{
+                      padding: "4px 10px", borderRadius: 4, border: `1px solid ${T.redBd}`,
+                      background: T.surface, color: T.red, fontSize: 10.5, fontWeight: 700,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}>Remove {selBound.length}</button>
+                  )}
+                  <button onClick={() => setSelected(new Set())} style={{
+                    background: "none", border: "none", color: T.textMute, cursor: "pointer", fontSize: 12, padding: 0,
+                  }}>✕</button>
+                </div>
+              )}
+
+              {/* Select-all row */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, paddingLeft: 2 }}>
+                <div onClick={toggleAll} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <div style={{
+                    width: 13, height: 13, borderRadius: 2, flexShrink: 0,
+                    border: `1px solid ${allFilteredSelected ? T.orange : T.borderHi}`,
+                    background: allFilteredSelected ? T.orange : T.surface,
+                    display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.12s",
+                  }}>
+                    {allFilteredSelected && <span style={{ color: "#fff", fontSize: 8, fontWeight: 900 }}>✓</span>}
+                  </div>
+                  <span style={{ fontSize: 10, color: T.textMute, fontWeight: 600 }}>Select all visible</span>
+                </div>
+                <span style={{ fontSize: 10, color: T.textFaint }}>{filtered.length} zone{filtered.length !== 1 ? "s" : ""}</span>
+              </div>
+
+              {/* Zone list */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {filtered.length > 0
+                  ? filtered.map((zone) => (
+                      <ZoneRow
+                        key={zone.zoneId} zone={zone}
+                        selected={selected.has(zone.zoneId)}
+                        busy={busyZones.has(zone.zoneId)}
+                        onToggle={() => toggleZone(zone.zoneId)}
+                        onInstall={() => setModal({ op: "bind", zones: [zone] })}
+                        onRemove={() => setModal({ op: "unbind", zones: [zone] })}
+                      />
+                    ))
+                  : <div style={{ textAlign: "center", padding: "20px 0", fontSize: 11, color: T.textFaint }}>
+                      {zones.length === 0 ? "No zones found for this token." : "No zones match."}
+                    </div>
+                }
+              </div>
+
+              {/* Progress log */}
+              {progress.length > 0 && <ProgressLog messages={progress} />}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      {modal && <ConfirmDialog modal={modal} onConfirm={handleConfirm} onCancel={() => setModal(null)} />}
+    </>
   );
 }
 
@@ -604,6 +892,16 @@ export function InstallerPage() {
       setTokenState("error");
       setWorkersInstalled(null);
     }
+  }
+
+  function refreshZones() {
+    if (!token.trim()) return;
+    setZonesLoading(true);
+    fetch("/status", { headers: { Authorization: `Bearer ${token.trim()}` } })
+      .then((r) => r.json() as Promise<{ accounts?: Array<{ zones: ZoneStatus[] }> }>)
+      .then((d) => setZones((d.accounts ?? []).flatMap((a) => a.zones)))
+      .catch(() => setZones([]))
+      .finally(() => setZonesLoading(false));
   }
 
   function handleChange(val: string) {
@@ -681,6 +979,8 @@ export function InstallerPage() {
           <ZonesSection
             zones={zones} loading={zonesLoading}
             workersInstalled={workersInstalled}
+            token={token} csUrl={csUrl} csKey={csKey}
+            onRefresh={refreshZones}
           />
         </div>
 
