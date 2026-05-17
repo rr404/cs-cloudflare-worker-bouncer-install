@@ -192,10 +192,76 @@ function CfTokenSection({
 
 // ─── Section 2 — CrowdSec Endpoint ───────────────────────────────────────────
 
-function CrowdSecSection() {
+function CrowdSecSection({
+  enabled, url, setUrl, apiKey, setApiKey,
+}: {
+  enabled: boolean;
+  url: string;
+  setUrl: (v: string) => void;
+  apiKey: string;
+  setApiKey: (v: string) => void;
+}) {
+  const [open, setOpen]       = useState(false);
+  const [showKey, setShowKey] = useState(false);
+
+  // Auto-open when it becomes enabled for the first time
+  const didAutoOpen = useRef(false);
+  if (enabled && !didAutoOpen.current) {
+    didAutoOpen.current = true;
+    Promise.resolve().then(() => setOpen(true));
+  }
+
+  const hostLabel = (() => { try { return new URL(url).host; } catch { return null; } })();
+
   return (
     <div style={{ borderBottom: `1px solid ${T.border}` }}>
-      <SectionHeader step={2} title="CrowdSec Endpoint" open={false} enabled={false} />
+      <SectionHeader
+        step={2} title="CrowdSec Endpoint"
+        subtitle={!open && hostLabel ? hostLabel : undefined}
+        open={open} enabled={enabled}
+        onToggle={() => setOpen((o) => !o)}
+      />
+
+      <div style={{
+        overflow: "hidden",
+        maxHeight: open ? "300px" : "0px",
+        transition: open ? "max-height 0.3s ease" : "max-height 0.2s ease",
+      }}>
+        <div style={{ padding: "2px 18px 16px" }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>Endpoint URL</label>
+            <input
+              value={url}
+              onChange={(e) => setUrl((e.target as HTMLInputElement).value)}
+              placeholder="https://your-lapi.example.com"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, display: "block", marginBottom: 5 }}>API Key</label>
+            <div style={{ position: "relative" }}>
+              <input
+                value={apiKey}
+                onChange={(e) => setApiKey((e.target as HTMLInputElement).value)}
+                type={showKey ? "text" : "password"}
+                placeholder="cs_live_••••••••"
+                style={{ ...inputStyle, fontFamily: "'JetBrains Mono',monospace", paddingRight: 52 }}
+              />
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                style={{
+                  position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                  background: "none", border: "none", color: T.textFaint,
+                  cursor: "pointer", fontSize: 9, letterSpacing: "0.06em",
+                  fontFamily: "inherit", fontWeight: 700, padding: 0,
+                }}
+              >
+                {showKey ? "HIDE" : "SHOW"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -284,12 +350,26 @@ function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
   );
 }
 
-function ZonesSection() {
+function ZonesSection({ workersInstalled }: { workersInstalled: boolean | null }) {
   return (
     <div style={{ borderBottom: `1px solid ${T.border}` }}>
       <SectionHeader step={3} title="Zone Protection" open={true} enabled={false} />
-
+      
       <div style={{ padding: "2px 18px 16px" }}>
+        {/* Workers status line */}
+        {workersInstalled !== null && (
+          <div style={{
+            marginBottom: 10, fontSize: 11, display: "flex", alignItems: "center", gap: 5,
+            color: workersInstalled ? T.green : T.textMute,
+          }}>
+            <span>{workersInstalled ? "✓" : "·"}</span>
+            <span>
+              {workersInstalled
+                ? "CrowdSec remediation workers installed"
+                : "CrowdSec remediation workers will be installed along zone binding"}
+            </span>
+          </div>
+        )}
         {/* Toolbar */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
           {/* Filter tabs */}
@@ -371,17 +451,39 @@ function ZonesSection() {
 export function InstallerPage() {
   const [token, setToken]           = useState("");
   const [tokenState, setTokenState] = useState<TokenState>("idle");
+  const [csUrl, setCsUrl]                     = useState("");
+  const [csKey, setCsKey]                     = useState("");
+  const [workersInstalled, setWorkersInstalled] = useState<boolean | null>(null);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const tokenValid = tokenState === "valid";
+
   async function verifyToken(val: string) {
-    if (!val.trim()) { setTokenState("idle"); return; }
+    if (!val.trim()) { setTokenState("idle"); setWorkersInstalled(null); return; }
     setTokenState("checking");
     try {
       const res  = await fetch("/verify-token", { headers: { Authorization: `Bearer ${val.trim()}` } });
       const data = await res.json() as { valid?: boolean };
-      setTokenState(data.valid ? "valid" : "error");
+      if (data.valid) {
+        setTokenState("valid");
+        // Fetch worker list in the background — don't block token validation feedback
+        fetch("/workers", { headers: { Authorization: `Bearer ${val.trim()}` } })
+          .then((r) => r.json() as Promise<{ workers?: string[] }>)
+          .then((d) => {
+            const w = d.workers ?? [];
+            setWorkersInstalled(
+              w.includes("crowdsec-cloudflare-worker-bouncer") &&
+              w.includes("crowdsec-decisions-sync-worker"),
+            );
+          })
+          .catch(() => setWorkersInstalled(false));
+      } else {
+        setTokenState("error");
+        setWorkersInstalled(null);
+      }
     } catch {
       setTokenState("error");
+      setWorkersInstalled(null);
     }
   }
 
@@ -451,8 +553,12 @@ export function InstallerPage() {
             token={token} tokenState={tokenState}
             onChange={handleChange} onBlur={() => verifyToken(token)}
           />
-          <CrowdSecSection />
-          <ZonesSection />
+          <CrowdSecSection
+            enabled={tokenValid}
+            url={csUrl} setUrl={setCsUrl}
+            apiKey={csKey} setApiKey={setCsKey}
+          />
+          <ZonesSection workersInstalled={workersInstalled} />
         </div>
 
         <div style={{

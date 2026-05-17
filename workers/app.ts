@@ -26,6 +26,27 @@ app.get("/verify-token", async (c) => {
 	}
 });
 
+/** List worker scripts whose name starts with "crowdsec" across all accounts */
+app.get("/workers", async (c) => {
+	const token = extractToken(c.req.header("Authorization"));
+	if (!token) return c.json({ error: "Missing API Token" }, 401);
+
+	try {
+		const client = createCloudflareClient(token);
+		const names: string[] = [];
+		for await (const account of client.accounts.list()) {
+			try {
+				for await (const script of client.workers.scripts.list({ account_id: account.id })) {
+					if (script.id?.startsWith("crowdsec")) names.push(script.id);
+				}
+			} catch { /* skip accounts we can't access */ }
+		}
+		return c.json({ workers: names });
+	} catch (err: unknown) {
+		return c.json({ error: extractErrorMessage(err) }, 400);
+	}
+});
+
 app.get("*", (c) => {
 	const requestHandler = createRequestHandler(
 		() => import("virtual:react-router/server-build"),
