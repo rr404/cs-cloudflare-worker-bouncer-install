@@ -1,5 +1,29 @@
 import { useRef, useState } from "react";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ZoneStatus = {
+  zoneId: string;
+  domain: string;
+  accountId: string;
+  accountName: string;
+  bound: boolean;
+  kvId: string | null;
+  d1Id: string | null;
+  turnstileWidgetId: string | null;
+  routesToProtect: string[];
+  actions: string[];
+  defaultAction: string;
+};
+
+type AccountStatus = {
+  accountId: string;
+  accountName: string;
+  kvId: string | null;
+  d1Id: string | null;
+  zones: ZoneStatus[];
+};
+
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
 const T = {
@@ -338,15 +362,7 @@ function CrowdSecSection({
 
 // ─── Section 3 — Zone Protection ─────────────────────────────────────────────
 
-// Static sample zones for layout reference
-const SAMPLE_ZONES = [
-  { id: "a1b2c3d4", domain: "example.com",    protected: true  },
-  { id: "e5f6a7b8", domain: "another.net",    protected: false },
-  { id: "c9d0e1f2", domain: "myshop.io",      protected: true  },
-  { id: "g3h4i5j6", domain: "staging.dev",    protected: false },
-];
-
-function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
+function ZoneRow({ zone }: { zone: ZoneStatus }) {
   return (
     <div style={{
       background: T.surface, border: `1px solid ${T.border}`,
@@ -354,8 +370,7 @@ function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
       display: "flex", alignItems: "center", gap: 10,
       position: "relative", overflow: "hidden",
     }}>
-      {/* Protected indicator stripe */}
-      {zone.protected && (
+      {zone.bound && (
         <div style={{
           position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
           background: T.green, borderRadius: "5px 0 0 5px",
@@ -380,18 +395,17 @@ function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
           <span style={{
             fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
             padding: "1px 6px", borderRadius: 3,
-            background: zone.protected ? T.greenBg : T.panel,
-            border: `1px solid ${zone.protected ? T.greenBd : T.border}`,
-            color: zone.protected ? T.green : T.textMute,
+            background: zone.bound ? T.greenBg : T.panel,
+            border: `1px solid ${zone.bound ? T.greenBd : T.border}`,
+            color: zone.bound ? T.green : T.textMute,
             display: "inline-flex", alignItems: "center", gap: 3,
           }}>
             <span style={{
               width: 4, height: 4, borderRadius: "50%",
-              background: zone.protected ? T.green : T.textFaint,
+              background: zone.bound ? T.green : T.textFaint,
             }} />
-            {zone.protected ? "PROTECTED" : "UNPROTECTED"}
+            {zone.bound ? "PROTECTED" : "UNPROTECTED"}
           </span>
-          {/* Zone ID chip */}
           <span style={{
             fontSize: 10, fontFamily: "'JetBrains Mono',monospace",
             padding: "1px 6px", borderRadius: 3,
@@ -399,7 +413,7 @@ function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
             color: T.textMute, display: "inline-flex", alignItems: "center", gap: 4,
           }}>
             <span style={{ color: T.textFaint, fontSize: 8, fontWeight: 600 }}>zone</span>
-            <span style={{ color: T.textMid }}>{zone.id.slice(0, 4)}</span>
+            <span style={{ color: T.textMid }}>{zone.zoneId.slice(0, 4)}</span>
             <span style={{ color: T.textGhost, letterSpacing: "0.1em" }}>••••</span>
           </span>
         </div>
@@ -413,18 +427,36 @@ function ZoneRow({ zone }: { zone: typeof SAMPLE_ZONES[number] }) {
           background: T.surface, color: T.textMid,
           fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
         }}>
-          {zone.protected ? "Remove" : "Install"}
+          {zone.bound ? "Remove" : "Install"}
         </button>
       </div>
     </div>
   );
 }
 
-function ZonesSection({ workersInstalled }: { workersInstalled: boolean | null }) {
+function ZonesSection({
+  zones, loading, workersInstalled,
+}: {
+  zones: ZoneStatus[];
+  loading: boolean;
+  workersInstalled: boolean | null;
+}) {
+  const [filter, setFilter] = useState<"all" | "protected" | "unprotected">("all");
+  const [search, setSearch] = useState("");
+
+  const allZones = zones;
+  const boundCount = allZones.filter((z) => z.bound).length;
+  const filtered = allZones
+    .filter((z) => {
+      const matchFilter = filter === "all" || (filter === "protected" ? z.bound : !z.bound);
+      return matchFilter && (search === "" || z.domain.toLowerCase().includes(search.toLowerCase()));
+    })
+    .sort((a, b) => a.domain.localeCompare(b.domain));
+
   return (
     <div style={{ borderBottom: `1px solid ${T.border}` }}>
-      <SectionHeader step={3} title="Zone Protection" open={true} enabled={false} />
-      
+      <SectionHeader step={3} title="Zone Protection" open={zones.length > 0 || loading} enabled={false} />
+
       <div style={{ padding: "2px 18px 16px" }}>
         {/* Workers status line */}
         {workersInstalled !== null && (
@@ -440,77 +472,76 @@ function ZonesSection({ workersInstalled }: { workersInstalled: boolean | null }
             </span>
           </div>
         )}
-        {/* Toolbar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          {/* Filter tabs */}
-          <div style={{ display: "flex", gap: 3 }}>
-            {["All", "Protected", "Unprotected"].map((label, i) => (
-              <button key={label} style={{
-                padding: "4px 10px", borderRadius: 4,
-                border: `1px solid ${i === 0 ? T.orangeBd : T.border}`,
-                background: i === 0 ? T.orangeBg : T.surface,
-                color: i === 0 ? T.orangeDk : T.textMid,
-                fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                display: "flex", alignItems: "center", gap: 4,
-              }}>
-                {label}
+
+        {loading ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: T.textMute, fontSize: 11 }}>
+            <Spinner size={10} color={T.orange} />
+            Loading zones…
+          </div>
+        ) : (
+          <>
+            {/* Toolbar */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 3 }}>
+                {([["all", "All", allZones.length], ["protected", "Protected", boundCount], ["unprotected", "Unprotected", allZones.length - boundCount]] as const).map(([key, label, count]) => (
+                  <button key={key} onClick={() => setFilter(key)} style={{
+                    padding: "4px 10px", borderRadius: 4,
+                    border: `1px solid ${filter === key ? T.orangeBd : T.border}`,
+                    background: filter === key ? T.orangeBg : T.surface,
+                    color: filter === key ? T.orangeDk : T.textMid,
+                    fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                    {label}
+                    <span style={{
+                      fontSize: 9.5, padding: "0 4px", borderRadius: 2,
+                      background: filter === key ? "rgba(246,130,31,0.16)" : T.panelAlt,
+                      color: filter === key ? T.orangeDk : T.textMute, fontWeight: 700,
+                    }}>{count}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ position: "relative", flex: 1, minWidth: 160, maxWidth: 240 }}>
                 <span style={{
-                  fontSize: 9.5, padding: "0 4px", borderRadius: 2,
-                  background: i === 0 ? "rgba(246,130,31,0.16)" : T.panelAlt,
-                  color: i === 0 ? T.orangeDk : T.textMute, fontWeight: 700,
-                }}>
-                  {i === 0 ? SAMPLE_ZONES.length : i === 1 ? SAMPLE_ZONES.filter((z) => z.protected).length : SAMPLE_ZONES.filter((z) => !z.protected).length}
-                </span>
-              </button>
-            ))}
-          </div>
+                  position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)",
+                  color: T.textFaint, fontSize: 11,
+                }}>⌕</span>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+                  placeholder="Filter by domain…"
+                  style={{
+                    width: "100%", padding: "5px 10px 5px 22px", borderRadius: 4,
+                    border: `1px solid ${T.border}`, background: T.surface, color: T.text,
+                    fontSize: 10.5, outline: "none", fontFamily: "'JetBrains Mono',monospace",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+            </div>
 
-          {/* Search input */}
-          <div style={{ position: "relative", flex: 1, minWidth: 160, maxWidth: 240 }}>
-            <span style={{
-              position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)",
-              color: T.textFaint, fontSize: 11,
-            }}>⌕</span>
-            <input
-              readOnly placeholder="Filter by domain…"
-              style={{
-                width: "100%", padding: "5px 10px 5px 22px", borderRadius: 4,
-                border: `1px solid ${T.border}`, background: T.surface, color: T.text,
-                fontSize: 10.5, outline: "none", fontFamily: "'JetBrains Mono',monospace",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          {/* Refresh button */}
-          <button style={{
-            padding: "4px 9px", borderRadius: 4, border: `1px solid ${T.border}`,
-            background: "transparent", color: T.textMute,
-            fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-          }}>↻</button>
-        </div>
-
-        {/* Select-all row */}
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          marginBottom: 6, paddingLeft: 2,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {/* Count row */}
             <div style={{
-              width: 13, height: 13, borderRadius: 2,
-              border: `1px solid ${T.borderHi}`, background: T.surface,
-            }} />
-            <span style={{ fontSize: 10, color: T.textMute, fontWeight: 600 }}>Select all visible</span>
-          </div>
-          <span style={{ fontSize: 10, color: T.textFaint }}>{SAMPLE_ZONES.length} zones</span>
-        </div>
+              display: "flex", justifyContent: "flex-end",
+              marginBottom: 6,
+            }}>
+              <span style={{ fontSize: 10, color: T.textFaint }}>
+                {filtered.length} zone{filtered.length !== 1 ? "s" : ""}
+              </span>
+            </div>
 
-        {/* Zone list */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          {SAMPLE_ZONES.map((zone) => (
-            <ZoneRow key={zone.id} zone={zone} />
-          ))}
-        </div>
+            {/* Zone list */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {filtered.length > 0
+                ? filtered.map((zone) => <ZoneRow key={zone.zoneId} zone={zone} />)
+                : <div style={{ textAlign: "center", padding: "20px 0", fontSize: 11, color: T.textFaint }}>
+                    {allZones.length === 0 ? "No zones found for this token." : "No zones match."}
+                  </div>
+              }
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -525,12 +556,14 @@ export function InstallerPage() {
   const [csKey, setCsKey]                     = useState("");
   const [workersInstalled, setWorkersInstalled] = useState<boolean | null>(null);
   const [installedLapiUrl, setInstalledLapiUrl] = useState<string | null | "loading">(null);
+  const [zones, setZones]           = useState<ZoneStatus[]>([]);
+  const [zonesLoading, setZonesLoading] = useState(false);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tokenValid = tokenState === "valid";
 
   async function verifyToken(val: string) {
-    if (!val.trim()) { setTokenState("idle"); setWorkersInstalled(null); setInstalledLapiUrl(null); return; }
+    if (!val.trim()) { setTokenState("idle"); setWorkersInstalled(null); setInstalledLapiUrl(null); setZones([]); setZonesLoading(false); return; }
     setTokenState("checking");
     try {
       const res  = await fetch("/verify-token", { headers: { Authorization: `Bearer ${val.trim()}` } });
@@ -554,8 +587,15 @@ export function InstallerPage() {
             } else {
               setInstalledLapiUrl(null);
             }
+            // Fetch zone status last — slowest call
+            setZonesLoading(true);
+            fetch("/status", { headers: { Authorization: `Bearer ${val.trim()}` } })
+              .then((r) => r.json() as Promise<{ accounts?: Array<{ zones: ZoneStatus[] }> }>)
+              .then((d) => setZones((d.accounts ?? []).flatMap((a) => a.zones)))
+              .catch(() => setZones([]))
+              .finally(() => setZonesLoading(false));
           })
-          .catch(() => { setWorkersInstalled(false); setInstalledLapiUrl(null); });
+          .catch(() => { setWorkersInstalled(false); setInstalledLapiUrl(null); setZonesLoading(false); });
       } else {
         setTokenState("error");
         setWorkersInstalled(null);
@@ -638,7 +678,10 @@ export function InstallerPage() {
             apiKey={csKey} setApiKey={setCsKey}
             installedUrl={installedLapiUrl}
           />
-          <ZonesSection workersInstalled={workersInstalled} />
+          <ZonesSection
+            zones={zones} loading={zonesLoading}
+            workersInstalled={workersInstalled}
+          />
         </div>
 
         <div style={{

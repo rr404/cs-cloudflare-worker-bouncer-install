@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 import { createCloudflareClient, extractErrorMessage } from "./services/cloudflare/client.js";
+import { detectProtectionStatus } from "./services/cloudflare/zones.js";
 
 const app = new Hono();
 
@@ -42,6 +43,20 @@ app.get("/workers", async (c) => {
 			} catch { /* skip accounts we can't access */ }
 		}
 		return c.json({ workers: names });
+	} catch (err: unknown) {
+		return c.json({ error: extractErrorMessage(err) }, 400);
+	}
+});
+
+/** Zone protection status across all accounts */
+app.get("/status", async (c) => {
+	const token = extractToken(c.req.header("Authorization"));
+	if (!token) return c.json({ error: "Missing API Token" }, 401);
+
+	try {
+		const client = createCloudflareClient(token);
+		const accounts = await detectProtectionStatus(client);
+		return c.json({ accounts });
 	} catch (err: unknown) {
 		return c.json({ error: extractErrorMessage(err) }, 400);
 	}
